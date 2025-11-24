@@ -1,64 +1,79 @@
 import streamlit as st
 from openai import OpenAI
+from streamlit_chat import message   # pip install streamlit-chat 필요
 
-st.title("2. Chat 페이지 (OpenAI Responses 기반)")
+st.title("My ChatBot2")
 
 # -----------------------------
-# 세션 초기화
+# API Key 관리
 # -----------------------------
-if "messages" not in st.session_state:
-    st.session_state.messages = []
-
 if "api_key" not in st.session_state:
     st.session_state.api_key = ""
 
+st.session_state.api_key = st.text_input(
+    "OpenAI API Key", 
+    type="password", 
+    value=st.session_state.api_key
+)
+
+if st.session_state.api_key:
+    client = OpenAI(api_key=st.session_state.api_key)
+else:
+    client = None
+
 
 # -----------------------------
-# API Key 입력
+# 대화 저장
 # -----------------------------
-api_key_input = st.text_input("OpenAI API Key", type="password",
-                              value=st.session_state.api_key)
-
-st.session_state.api_key = api_key_input
+if "past" not in st.session_state:
+    st.session_state.past = []   # user messages
+if "generated" not in st.session_state:
+    st.session_state.generated = []  # bot messages
 
 
 # -----------------------------
 # Clear 버튼
 # -----------------------------
-if st.button("Clear 대화"):
-    st.session_state.messages = []
+if st.button("Clear"):
+    st.session_state.past = []
+    st.session_state.generated = []
 
 
 # -----------------------------
-# 이전 메시지 렌더링
+# 메시지 렌더링
 # -----------------------------
-for msg in st.session_state.messages:
-    with st.chat_message(msg["role"]):
-        st.write(msg["content"])
+for i in range(len(st.session_state.past)):
+    message(st.session_state.past[i], is_user=True, key=f"user_{i}")
+    message(st.session_state.generated[i], key=f"bot_{i}")
 
 
 # -----------------------------
 # 입력창
 # -----------------------------
-user_input = st.chat_input("메시지를 입력하세요")
+user_input = st.chat_input("What is up?")
 
 if user_input:
-    if not st.session_state.api_key:
-        st.error("API Key를 입력하세요.")
+    if not client:
+        st.error("Please enter API Key.")
     else:
-        client = OpenAI(api_key=st.session_state.api_key)
+        # 유저 메시지 출력
+        st.session_state.past.append(user_input)
 
-        # 유저 메시지 저장
-        st.session_state.messages.append({"role": "user", "content": user_input})
-
-        # 모델 응답 생성
-        response = client.responses.create(
+        # GPT-5-mini Chat Completion 호출
+        response = client.chat.completions.create(
             model="gpt-5-mini",
-            messages=st.session_state.messages
+            messages=[
+                {"role": "system", "content": "You are a helpful AI assistant."},
+                *[
+                    {"role": "user", "content": u}
+                    for u in st.session_state.past
+                ],
+            ]
         )
 
-        bot_text = response.output_text
+        bot_output = response.choices[0].message.content
 
-        st.session_state.messages.append({"role": "assistant", "content": bot_text})
+        st.session_state.generated.append(bot_output)
 
+        # 화면 리프레시
         st.rerun()

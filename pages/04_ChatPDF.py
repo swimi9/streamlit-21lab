@@ -2,79 +2,68 @@ import streamlit as st
 from openai import OpenAI
 import tempfile
 
-st.title("4. ChatPDF (PDF 기반 챗봇)")
+st.title("4. ChatPDF (Assistant + Retrieval 기반)")
 
-# -----------------------------
-# API Key 입력
-# -----------------------------
-api_key = st.text_input("OpenAI API Key를 입력하세요", type="password")
+api_key = st.text_input("OpenAI API Key", type="password")
+client = OpenAI(api_key=api_key) if api_key else None
 
-if api_key:
-    client = OpenAI(api_key=api_key)
-else:
-    client = None
+if "assistant_id" not in st.session_state:
+    st.session_state.assistant_id = None
 
-# Vector Store 유지
-if "vector_store_id" not in st.session_state:
-    st.session_state.vector_store_id = None
-
-
-# -----------------------------
-# 1) PDF 업로드 → File → Vector Store 생성
-# -----------------------------
 uploaded_pdf = st.file_uploader("PDF 파일 업로드", type=["pdf"])
 
 if uploaded_pdf and client:
-
-    # 임시 파일로 변환
+    # 임시 저장
     with tempfile.NamedTemporaryFile(delete=False, suffix=".pdf") as tmp:
         tmp.write(uploaded_pdf.read())
-        tmp_path = tmp.name
+        pdf_path = tmp.name
 
-    # PDF 파일 업로드 (assistants 용도)
+    # 파일 업로드
     file_obj = client.files.create(
-        file=open(tmp_path, "rb"),
+        file=open(pdf_path, "rb"),
         purpose="assistants"
     )
 
-    # 벡터스토어 생성
-    vector_store = client.vector_stores.create(name="pdf-store")
-
-    client.vector_stores.add_files(
-        vector_store_id=vector_store.id,
+    # Assistant 생성 (retrieval tool 자동 사용)
+    assistant = client.assistants.create(
+        name="PDF Assistant",
+        instructions="Uploaded PDF 내용을 기반으로 사용자 질문에 답하세요.",
+        model="gpt-5-mini",
+        tools=[{"type": "retrieval"}],
         file_ids=[file_obj.id]
     )
 
-    st.session_state.vector_store_id = vector_store.id
+    st.session_state.assistant_id = assistant.id
 
-    st.success("PDF 업로드 및 Vector Store 생성 완료!")
+    st.success("PDF 업로드 완료! 이제 질문할 수 있어요.")
 
+# 질문 입력
+question = st.text_input("PDF 내용에 대해 질문해보세요")
+ask = st.button("질문하기")
 
-# -----------------------------
-# 2) Vector Store 삭제 기능
-# -----------------------------
-if st.button("Clear Vector Store"):
-    st.session_state.vector_store_id = None
-    st.success("Vector Store 제거됨.")
-
-
-# -----------------------------
-# 3) 질문 → PDF 기반 검색 + 답변 생성
-# -----------------------------
-question = st.text_input("PDF 내용과 관련된 질문을 입력하세요")
-ask_btn = st.button("질문하기")
-
-if ask_btn:
-    if not client:
-        st.error("API Key를 먼저 입력하세요.")
-    elif not st.session_state.vector_store_id:
-        st.error("먼저 PDF를 업로드하세요.")
+if ask:
+    if not api_key:
+        st.error("API Key를 입력하세요.")
+    elif not st.session_state.assistant_id:
+        st.error("PDF를 먼저 업로드하세요.")
     else:
-        response = client.responses.create(
-            model="gpt-5-mini",
-            input=question,
-            vector_store_ids=[st.session_state.vector_store_id]
+        # 스레드 생성 후 메시지 추가
+        thread = client.threads.create()
+        client.threads.messages.create(
+            thread_id=thread.id,
+            role="user",
+            content=question
         )
 
+        # 실행
+        run = client.threads.runs.create_and_poll(
+            thread_id=thread.id,
+            assistant_id=st.session_state.assistant_id
+        )
+
+        # 메시지 받기
+        messages = client.threads.messages.list(thread_id=thread.id)
+        answer = messages.data[0].content[0].text.value
+
         st.write("### 답변:")
-        st.write(response.output_text)
+        st.write(answer)
