@@ -4,49 +4,77 @@ import tempfile
 
 st.title("4. ChatPDF (PDF 기반 챗봇)")
 
-# API Key
-api_key = st.text_input("OpenAI API Key", type="password")
-client = OpenAI(api_key=api_key) if api_key else None
+# -----------------------------
+# API Key 입력
+# -----------------------------
+api_key = st.text_input("OpenAI API Key를 입력하세요", type="password")
 
-# Vector Store 저장용
+if api_key:
+    client = OpenAI(api_key=api_key)
+else:
+    client = None
+
+# Vector Store 유지
 if "vector_store_id" not in st.session_state:
     st.session_state.vector_store_id = None
 
-uploaded = st.file_uploader("PDF 파일 업로드", type=["pdf"])
 
-if uploaded and client:
-    with tempfile.NamedTemporaryFile(delete=False) as tmp:
-        tmp.write(uploaded.read())
-        pdf_path = tmp.name
+# -----------------------------
+# 1) PDF 업로드 → File → Vector Store 생성
+# -----------------------------
+uploaded_pdf = st.file_uploader("PDF 파일 업로드", type=["pdf"])
 
-    # Upload
-    file = client.files.create(file=open(pdf_path, "rb"), purpose="assistants")
+if uploaded_pdf and client:
 
-    # Create Vector Store
-    store = client.vector_stores.create(name="pdf-store")
-    client.vector_stores.files.add(store.id, file_ids=[file.id])
+    # 임시 파일로 변환
+    with tempfile.NamedTemporaryFile(delete=False, suffix=".pdf") as tmp:
+        tmp.write(uploaded_pdf.read())
+        tmp_path = tmp.name
 
-    st.session_state.vector_store_id = store.id
-    st.success("PDF가 성공적으로 처리되었습니다.")
+    # PDF 파일 업로드 (assistants 용도)
+    file_obj = client.files.create(
+        file=open(tmp_path, "rb"),
+        purpose="assistants"
+    )
 
-# Clear 버튼
+    # 벡터스토어 생성
+    vector_store = client.vector_stores.create(name="pdf-store")
+
+    client.vector_stores.add_files(
+        vector_store_id=vector_store.id,
+        file_ids=[file_obj.id]
+    )
+
+    st.session_state.vector_store_id = vector_store.id
+
+    st.success("PDF 업로드 및 Vector Store 생성 완료!")
+
+
+# -----------------------------
+# 2) Vector Store 삭제 기능
+# -----------------------------
 if st.button("Clear Vector Store"):
     st.session_state.vector_store_id = None
-    st.success("Vector Store 삭제됨.")
+    st.success("Vector Store 제거됨.")
 
-# 질문
-question = st.text_input("PDF 내용에 대해 질문해보세요.")
-ask = st.button("질문하기")
 
-if ask:
-    if not api_key:
-        st.error("API Key 입력 필요.")
+# -----------------------------
+# 3) 질문 → PDF 기반 검색 + 답변 생성
+# -----------------------------
+question = st.text_input("PDF 내용과 관련된 질문을 입력하세요")
+ask_btn = st.button("질문하기")
+
+if ask_btn:
+    if not client:
+        st.error("API Key를 먼저 입력하세요.")
     elif not st.session_state.vector_store_id:
-        st.error("먼저 PDF 파일을 업로드하세요.")
+        st.error("먼저 PDF를 업로드하세요.")
     else:
-        run = client.responses.create(
+        response = client.responses.create(
             model="gpt-5-mini",
-            vector_store_ids=[st.session_state.vector_store_id],
-            input=question
+            input=question,
+            vector_store_ids=[st.session_state.vector_store_id]
         )
-        st.write(run.output_text)
+
+        st.write("### 답변:")
+        st.write(response.output_text)
